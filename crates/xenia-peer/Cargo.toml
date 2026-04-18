@@ -22,3 +22,9 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 thiserror.workspace = true
+
+[features]
+# Pass-through: rebuild xenia-video with the h264 feature so the
+# daemon can select `--codec h264` at runtime. Requires libav dev
+# headers (enable inside nix develop).
+h264 = ["xenia-video/h264"]

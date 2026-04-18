@@ -14,7 +14,7 @@
 //! deterministic output byte-for-byte. This is the M1 exit-criterion
 //! smoke check without needing a separate integration harness.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use tracing::{info, warn};
 use xenia_capture::{ScreenCapture, TestCapture};
 use xenia_peer_core::frame::PixelFormat as FramePixelFormat;
@@ -22,6 +22,37 @@ use xenia_peer_core::transport::{TcpTransport, Transport};
 use xenia_peer_core::{Session, SessionRole};
 use xenia_video::passthrough::PassthroughDecoder;
 use xenia_video::{Decoder, EncodedPacket};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum CodecChoice {
+    Passthrough,
+    H264,
+}
+
+fn make_decoder(choice: CodecChoice) -> Result<Box<dyn Decoder>, Box<dyn std::error::Error>> {
+    match choice {
+        CodecChoice::Passthrough => Ok(Box::new(PassthroughDecoder::new())),
+        CodecChoice::H264 => build_h264_decoder(),
+    }
+}
+
+#[cfg(feature = "h264")]
+fn build_h264_decoder() -> Result<Box<dyn Decoder>, Box<dyn std::error::Error>> {
+    let dec = xenia_video::h264::H264Decoder::new()?;
+    Ok(Box::new(dec))
+}
+
+#[cfg(not(feature = "h264"))]
+fn build_h264_decoder() -> Result<Box<dyn Decoder>, Box<dyn std::error::Error>> {
+    Err("xenia-viewer was built without the `h264` feature; rebuild with `cargo build -p xenia-viewer --features h264`, or connect to a daemon using --codec passthrough".into())
+}
+
+fn codec_to_frame_format(choice: CodecChoice) -> FramePixelFormat {
+    match choice {
+        CodecChoice::Passthrough => FramePixelFormat::Passthrough,
+        CodecChoice::H264 => FramePixelFormat::H264,
+    }
+}
 
 /// Dev fixture key. MUST match the daemon's value.
 const FIXTURE_KEY: [u8; 32] = *b"xenia-peer-m0-stub-fixture-key!!";
@@ -60,9 +91,15 @@ struct Args {
     /// If set, instantiate a local mirror `TestCapture` and
     /// byte-compare every decoded frame to what the daemon should
     /// have produced. Fails fast on mismatch. M1 exit-criterion
-    /// check.
+    /// check for the passthrough codec. H.264 is lossy so this
+    /// flag is only meaningful with `--codec passthrough`.
     #[arg(long)]
     verify: bool,
+
+    /// Codec the daemon is using. Must match the daemon's
+    /// `--codec` flag.
+    #[arg(long, value_enum, default_value_t = CodecChoice::Passthrough)]
+    codec: CodecChoice,
 }
 
 fn parse_source_id(hex: &str) -> Result<[u8; 8], String> {
@@ -90,17 +127,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_id = parse_source_id(&args.source_id_hex)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    info!(peer = %args.connect, frames = args.frames, verify = args.verify, "connecting to xenia-peer daemon");
-    warn!("M1 scaffold: fixture key, passthrough decode, no GUI. See ADR-001.");
+    info!(peer = %args.connect, frames = args.frames, verify = args.verify, codec = ?args.codec, "connecting to xenia-peer daemon");
+    warn!("M1 scaffold: fixture key, no GUI. See ADR-001.");
 
     let mut transport = TcpTransport::connect(&args.connect).await?;
     let mut session = Session::with_fixture(SessionRole::Viewer, source_id, args.epoch);
     session.install_key(FIXTURE_KEY);
 
-    let mut decoder = PassthroughDecoder::new();
-    let mut expected_mirror = if args.verify {
+    let mut decoder = make_decoder(args.codec)?;
+    let expected_frame_fmt = codec_to_frame_format(args.codec);
+    info!(codec = ?args.codec, "decoder ready");
+    let verify_is_meaningful = args.codec == CodecChoice::Passthrough;
+    let mut expected_mirror = if args.verify && verify_is_meaningful {
         Some(TestCapture::new(args.width, args.height))
     } else {
+        if args.verify && !verify_is_meaningful {
+            warn!("--verify with a lossy codec (H.264) would fail trivially; mirror disabled");
+        }
         None
     };
 
@@ -124,13 +167,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        if raw_frame.pixel_format != FramePixelFormat::Passthrough {
-            warn!(fmt = ?raw_frame.pixel_format, "expected Passthrough frame, got something else");
+        if raw_frame.pixel_format != expected_frame_fmt {
+            warn!(
+                fmt = ?raw_frame.pixel_format,
+                expected = ?expected_frame_fmt,
+                "frame format mismatch (daemon and viewer must agree on --codec)"
+            );
             continue;
         }
         let packet = EncodedPacket {
             bytes: raw_frame.pixels,
             pts_ms: raw_frame.timestamp_ms,
+            // Flag is informational-only for the decoder; both
+            // passthrough and H.264 ignore it on the decode path
+            // (H.264 looks at the NAL header itself).
             is_keyframe: true,
         };
         let frames = match decoder.decode(&packet) {

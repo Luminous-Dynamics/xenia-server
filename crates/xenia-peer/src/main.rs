@@ -27,7 +27,7 @@
 //! | M3 | Iroh QUIC transport; WebSocket fallback. |
 //! | M4 | Systemd unit, sandboxing, log rotation. |
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
@@ -37,6 +37,48 @@ use xenia_peer_core::transport::{TcpTransport, Transport};
 use xenia_peer_core::{frame::RawFrame, Session, SessionRole};
 use xenia_video::passthrough::PassthroughEncoder;
 use xenia_video::{EncodeParams, Encoder, PixelFormat as CodecPixelFormat};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum CodecChoice {
+    /// No compression. Always available. ~RGBA*width*height bytes per frame.
+    Passthrough,
+    /// H.264 via libx264 (ffmpeg-next). Requires the `h264` Cargo feature
+    /// at build time AND libav dev headers. In `nix develop` shells both
+    /// are provided; outside Nix install ffmpeg + llvm dev packages.
+    H264,
+}
+
+fn make_encoder(
+    choice: CodecChoice,
+    params: EncodeParams,
+) -> Result<Box<dyn Encoder>, Box<dyn std::error::Error>> {
+    match choice {
+        CodecChoice::Passthrough => Ok(Box::new(PassthroughEncoder::new(params))),
+        CodecChoice::H264 => build_h264_encoder(params),
+    }
+}
+
+#[cfg(feature = "h264")]
+fn build_h264_encoder(
+    params: EncodeParams,
+) -> Result<Box<dyn Encoder>, Box<dyn std::error::Error>> {
+    let enc = xenia_video::h264::H264Encoder::new(params)?;
+    Ok(Box::new(enc))
+}
+
+#[cfg(not(feature = "h264"))]
+fn build_h264_encoder(
+    _params: EncodeParams,
+) -> Result<Box<dyn Encoder>, Box<dyn std::error::Error>> {
+    Err("xenia-peer was built without the `h264` feature; rebuild inside `nix develop` with `cargo build -p xenia-peer --features h264`, or use --codec passthrough".into())
+}
+
+fn codec_to_frame_format(choice: CodecChoice) -> FramePixelFormat {
+    match choice {
+        CodecChoice::Passthrough => FramePixelFormat::Passthrough,
+        CodecChoice::H264 => FramePixelFormat::H264,
+    }
+}
 
 /// Dev fixture key. M2 replaces with handshake-derived session key.
 const FIXTURE_KEY: [u8; 32] = *b"xenia-peer-m0-stub-fixture-key!!";
@@ -73,6 +115,17 @@ struct Args {
     /// indefinitely (until viewer disconnects).
     #[arg(long, default_value_t = 30)]
     frames: u64,
+
+    /// Codec to use. `passthrough` is always available; `h264`
+    /// requires `--features h264` at build time + libav dev
+    /// headers (enable with `nix develop`).
+    #[arg(long, value_enum, default_value_t = CodecChoice::Passthrough)]
+    codec: CodecChoice,
+
+    /// Target H.264 bitrate in kilobits per second. Ignored for
+    /// the passthrough codec.
+    #[arg(long, default_value_t = 3000)]
+    bitrate_kbps: u32,
 }
 
 fn parse_source_id(hex: &str) -> Result<[u8; 8], String> {
@@ -110,10 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(&args.listen).await?;
     let local = listener.local_addr()?;
-    info!(addr = %local, width = args.width, height = args.height, fps = args.fps, "xenia-peer daemon listening");
-    warn!(
-        "M1 scaffold: fixture key, TestCapture synthetic frames, passthrough codec. See ADR-001."
-    );
+    info!(addr = %local, width = args.width, height = args.height, fps = args.fps, codec = ?args.codec, "xenia-peer daemon listening");
+    warn!("M1 scaffold: fixture key, TestCapture synthetic frames. See ADR-001.");
 
     let (stream, peer) = listener.accept().await?;
     stream.set_nodelay(true).ok();
@@ -124,13 +175,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     session.install_key(FIXTURE_KEY);
 
     let mut capture = TestCapture::new(args.width, args.height);
-    let mut encoder = PassthroughEncoder::new(EncodeParams {
+    let encode_params = EncodeParams {
         width: args.width,
         height: args.height,
         pixel_format: CodecPixelFormat::Rgba,
         target_fps: args.fps,
-        bitrate_kbps: 0, // passthrough ignores this
-    });
+        bitrate_kbps: args.bitrate_kbps,
+    };
+    let mut encoder = make_encoder(args.codec, encode_params)?;
+    let frame_fmt = codec_to_frame_format(args.codec);
+    info!(codec = ?args.codec, "encoder ready");
 
     let frame_interval = if args.fps > 0 {
         Duration::from_micros(1_000_000 / args.fps as u64)
@@ -166,7 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pts,
                 captured.width,
                 captured.height,
-                FramePixelFormat::Passthrough,
+                frame_fmt,
                 packet.bytes,
             );
             let envelope = match session.seal_frame(&raw_frame) {
