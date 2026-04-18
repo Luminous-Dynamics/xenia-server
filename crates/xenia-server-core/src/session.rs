@@ -94,10 +94,16 @@ impl Session {
 
     /// Forward consent events to the underlying wire session. See
     /// [`xenia_wire::Session::observe_consent`].
+    ///
+    /// Returns `Result<ConsentState, ConsentViolation>` — legal
+    /// transitions and benign no-ops return `Ok(state)`; protocol
+    /// violations (SPEC draft-03 §12.6) return `Err(violation)`
+    /// with the session state untouched. Callers SHOULD treat a
+    /// violation as a hard fault signal and terminate the session.
     pub fn observe_consent(
         &mut self,
         event: xenia_wire::consent::ConsentEvent,
-    ) -> xenia_wire::consent::ConsentState {
+    ) -> Result<xenia_wire::consent::ConsentState, xenia_wire::consent::ConsentViolation> {
         self.wire.observe_consent(event)
     }
 
