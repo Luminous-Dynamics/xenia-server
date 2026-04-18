@@ -70,20 +70,24 @@ Full reasoning: [ADR-001 §Decision 3](docs/ADR-001-m0-architecture.md).
 
 ## Status
 
-| Milestone | Status | Deliverable |
-|---|---|---|
-| **M0** | ✅ shipped | Workspace scaffold + loopback-tested wire integration + daemon + viewer binaries + ADR-001. |
-| **M1.1** | ✅ shipped | `xenia-capture` + `xenia-video` crates (trait + passthrough codec + H.264 stubs). Full pipeline wired end-to-end with `TestCapture`. |
-| **M1.2b** | ✅ shipped | Real H.264 encode/decode via `ffmpeg-next` + libx264. `--codec {passthrough,h264}` flag on both binaries. Compression verified: ~100× smaller than passthrough on synthetic content. |
-| M1.2c | 🚧 not started | Real Wayland screen capture: `WlrootsCapture` via `wlr-screencopy-unstable-v1`, `PortalCapture` via `xdg-desktop-portal ScreenCast`. Both are `Unavailable` stubs today. |
-| M2 | not started | Input injection (Wayland, libei + xdg-portal paths) + consent-ceremony UI on the host. 1–2 weeks. |
-| M3 | not started | Iroh QUIC primary transport; WebSocket fallback. Cross-platform (macOS + Windows) deferred until post-M3 signal. 4–6 weeks. |
-| M4 | not started | egui GUI on `xenia-viewer`, clipboard, audio, file transfer, session recording. 3–4 months. |
-| M5+ | speculative | Attended-support flow, admin console, PSA integrations. Signal-gated. |
+The single source of truth for what's done, blocked, and queued is
+[`ROADMAP.md`](ROADMAP.md). Short version:
 
-Full plan:
-[`plans/VIEWER_PLAN.md`](https://github.com/Luminous-Dynamics/xenia-wire/blob/main/plans/VIEWER_PLAN.md)
-in the `xenia-wire` repo.
+**Live today** — 3 codecs (passthrough / H.264 / HDC), 2
+transports (TCP / WebSocket), 3 viewers (CLI / egui GUI / browser),
+end-to-end testable between any two desktops and desktop→phone
+browser.
+
+**Hard blockers before real deployment** — PQC handshake (still
+on fixture key), real Wayland capture (stub today), consent-
+ceremony UI. See ROADMAP §"Hard blockers for real deployment".
+
+**Still-to-carry from Symthaea** — input injection, Iroh QUIC,
+clipboard, file transfer, audio, recording. See ROADMAP §"From
+Symthaea: carry-wholesale backlog".
+
+Full VIEWER_PLAN (the parent design doc) is in the sibling repo:
+[`plans/VIEWER_PLAN.md`](https://github.com/Luminous-Dynamics/xenia-wire/blob/main/plans/VIEWER_PLAN.md).
 
 ## Platform policy — Wayland only
 
