@@ -1,0 +1,25 @@
+[package]
+name = "xenia-server-core"
+description = "Core session + transport primitives for xenia-server. M0 — pre-alpha, no real capture/encode yet."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false  # unpublished until M1 makes it useful
+
+[dependencies]
+xenia-wire = { workspace = true, features = ["consent"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true
