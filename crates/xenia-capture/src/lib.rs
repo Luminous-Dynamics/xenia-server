@@ -20,11 +20,11 @@
 //!   Always available. Used by unit + integration tests.
 //! - [`BlankCapture`] — solid-color frames. Always available. Useful
 //!   for bandwidth smoke tests where content is irrelevant.
-//! - [`WlrootsCapture`] — wlr-screencopy-unstable-v1 on wlroots
+//! - `WlrootsCapture` — wlr-screencopy-unstable-v1 on wlroots
 //!   compositors (Sway, Hyprland, labwc). Feature-gated on
 //!   `wayland-wlroots`. Scaffold only as of `0.0.0-m1`; the
 //!   `Screencopy` WAYLAND negotiation lands in M1.2b.
-//! - [`PortalCapture`] — xdg-desktop-portal ScreenCast on GNOME/KDE.
+//! - `PortalCapture` — xdg-desktop-portal ScreenCast on GNOME/KDE.
 //!   Feature-gated on `wayland-portal`. Scaffold only as of
 //!   `0.0.0-m1`; portal DBus negotiation lands in M1.2c.
 //!
