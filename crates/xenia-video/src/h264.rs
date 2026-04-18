@@ -1,11 +1,11 @@
 // Copyright (c) 2024-2026 Tristan Stoltz / Luminous Dynamics
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Portions derived from `symthaea/crates/symthaea-phone-embodiment/src/scrcpy/decoder.rs`
-// (same author, same AGPL terms) — specifically the ffmpeg-next
-// threading config, swscale-cached-context pattern, and the
-// send/receive drain loop for decode. See VIEWER_PLAN §0.1
-// "carry wholesale" guidance.
+// Portions derived from `symthaea/crates/symthaea-phone-embodiment/src/scrcpy/decoder.rs`.
+// Relicensed to Apache-2.0 OR MIT for this crate by the copyright
+// holder (same author); see ADR-002. Specifically carried over:
+// ffmpeg-next threading config, swscale-cached-context pattern,
+// send/receive drain loop for decode.
 
 //! H.264 encode / decode via `ffmpeg-next` (libx264 + libavcodec).
 //!

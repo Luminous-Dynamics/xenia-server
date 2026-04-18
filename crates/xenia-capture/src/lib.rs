@@ -1,12 +1,14 @@
 // Copyright (c) 2024-2026 Tristan Stoltz / Luminous Dynamics
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Portions derived from `symthaea/src/swarm/rdp_capture.rs` (same
-// author, same AGPL terms). Per VIEWER_PLAN §0.1, `rdp_capture.rs`
-// was explicitly listed as a "carry wholesale" artifact for this
-// crate; the pure-Rust trait + TestCapture + BlankCapture pieces
-// below are extracted directly. The X11 implementation present in
-// the upstream was dropped per ADR-001 Decision 2 (Wayland-only).
+// Portions derived from `symthaea/src/swarm/rdp_capture.rs`.
+// Relicensed to Apache-2.0 OR MIT for this crate by the copyright
+// holder (same author); see ADR-002 for the library-vs-binary
+// licensing rationale. Per VIEWER_PLAN §0.1, `rdp_capture.rs` was
+// explicitly listed as a "carry wholesale" artifact for this crate;
+// the pure-Rust trait + TestCapture + BlankCapture pieces below are
+// extracted directly. The X11 implementation present in the
+// upstream was dropped per ADR-001 Decision 2 (Wayland-only).
 
 //! # xenia-capture
 //!

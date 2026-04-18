@@ -1,13 +1,15 @@
 // Copyright (c) 2024-2026 Tristan Stoltz / Luminous Dynamics
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Ported from `symthaea/src/swarm/rdp_codec.rs` (same author, same
-// AGPL terms). Faithful port of the 64x64 grayscale-tile HDC-delta
-// codec, minus the Symthaea-specific types and the consciousness-
-// coupled framing. `ContinuousHV` is inlined below as a minimal
-// ~40-line struct — the only HDC surface the codec touches is
-// `from_values`, `.similarity(&Self)`, and `.values` element access,
-// so there's no need to drag in `symthaea-core` as a dependency.
+// Ported from `symthaea/src/swarm/rdp_codec.rs`. Relicensed to
+// Apache-2.0 OR MIT for this crate by the copyright holder (same
+// author); see ADR-002 for the library-vs-binary licensing split.
+// Faithful port of the 64x64 grayscale-tile HDC-delta codec, minus
+// the Symthaea-specific types and the consciousness-coupled framing.
+// `ContinuousHV` is inlined below as a minimal ~40-line struct —
+// the only HDC surface the codec touches is `from_values`,
+// `.similarity(&Self)`, and `.values` element access, so there's no
+// need to drag in `symthaea-core` as a dependency.
 
 //! HDC hybrid tile-delta codec.
 //!
