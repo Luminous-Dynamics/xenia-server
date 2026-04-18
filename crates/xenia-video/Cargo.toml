@@ -1,0 +1,27 @@
+[package]
+name = "xenia-video"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "AGPL-3.0-or-later"
+description = "Video-codec abstraction + backends for the Xenia remote-session stack. Passthrough (default, no-deps) + H.264 via ffmpeg-next (feature-gated, requires libav headers)."
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+# H.264 via libx264 + libavcodec. Requires libav* dev headers at
+# build time — enable inside a `nix develop` shell or a container
+# with ffmpeg dev packages. Default build path is passthrough-only.
+ffmpeg-next = { version = "7", default-features = false, features = ["codec", "format", "software-scaling"], optional = true }
+
+[features]
+# Passthrough codec is always available and has no external deps.
+default = []
+# H.264 software encode/decode via libx264. Pulls in ffmpeg-next.
+h264 = ["dep:ffmpeg-next"]
+
+[dev-dependencies]

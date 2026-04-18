@@ -20,10 +20,15 @@ pub enum PixelFormat {
     /// 8 bits per channel, blue-green-red-alpha order, 4 bytes per pixel.
     /// Reserved — not yet produced by any capture backend.
     Bgra8 = 1,
-    /// Encoded H.264 access unit (SPS/PPS + slice). Reserved for M1.
+    /// Encoded H.264 access unit (SPS/PPS + slice). Reserved for
+    /// M1.2b when the real ffmpeg-next backend lands.
     H264 = 16,
     /// Encoded VP9 frame. Reserved for M1.
     Vp9 = 17,
+    /// xenia-video passthrough codec payload (M1 working path —
+    /// identity-encoded RGBA with a 12-byte magic/header). See
+    /// `xenia_video::passthrough`.
+    Passthrough = 32,
 }
 
 /// A single captured-screen frame on the forward path.
@@ -78,6 +83,38 @@ impl RawFrame {
         }
     }
 
+    /// Construct a frame carrying already-encoded bytes (H.264 NAL,
+    /// VP9 packet, or xenia-video passthrough payload).
+    ///
+    /// `width` and `height` remain the logical frame dimensions — the
+    /// decoder uses them for output buffer sizing. `bytes` is opaque;
+    /// the decoder that produced it is responsible for interpreting
+    /// the format.
+    pub fn encoded(
+        frame_id: u64,
+        timestamp_ms: u64,
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        bytes: Vec<u8>,
+    ) -> Self {
+        debug_assert!(
+            matches!(
+                format,
+                PixelFormat::H264 | PixelFormat::Vp9 | PixelFormat::Passthrough
+            ),
+            "RawFrame::encoded requires an encoded PixelFormat variant",
+        );
+        Self {
+            frame_id,
+            timestamp_ms,
+            width,
+            height,
+            pixel_format: format,
+            pixels: bytes,
+        }
+    }
+
     /// Runtime check that the pixel buffer matches the declared layout.
     /// Called by the receive path before rendering; returns `false`
     /// when the frame should be dropped.
@@ -86,7 +123,7 @@ impl RawFrame {
             PixelFormat::Rgba8 | PixelFormat::Bgra8 => {
                 self.pixels.len() as u64 == u64::from(self.width) * u64::from(self.height) * 4
             }
-            PixelFormat::H264 | PixelFormat::Vp9 => {
+            PixelFormat::H264 | PixelFormat::Vp9 | PixelFormat::Passthrough => {
                 // Encoded formats are opaque — any non-empty byte
                 // sequence is structurally valid here; decoder has
                 // the actual say.

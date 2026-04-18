@@ -12,6 +12,8 @@ publish = false
 
 [dependencies]
 xenia-peer-core = { path = "../xenia-peer-core" }
+xenia-capture = { path = "../xenia-capture" }
+xenia-video = { path = "../xenia-video" }
 xenia-wire = { workspace = true, features = ["consent", "reference-frame"] }
 tokio.workspace = true
 tracing.workspace = true

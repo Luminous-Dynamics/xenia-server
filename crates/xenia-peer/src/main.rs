@@ -3,39 +3,40 @@
 
 //! `xenia-peer` — headless daemon that hosts a Xenia session.
 //!
-//! **Pre-alpha M0 scaffold.** This binary currently:
+//! **M1 scaffold.** Full capture → encode → seal → send pipeline
+//! now wired end-to-end using:
 //!
-//! - Listens on a TCP port for a single incoming viewer connection.
-//! - Installs a fixture session key (dev only; M2 replaces with
-//!   ML-KEM-768 handshake).
-//! - Receives `RawInput` envelopes and logs their sequence + payload
-//!   size.
-//! - Does **not** capture the screen. Does **not** encode video.
-//!   Those land in M1.
+//! - [`xenia_capture::TestCapture`] producing synthetic RGBA frames
+//!   (M1.2b swaps in real Wayland capture behind a feature flag).
+//! - [`xenia_video::passthrough`] as the codec (M1.2b adds real
+//!   H.264 via `ffmpeg-next`).
+//! - `xenia-peer-core::Session::seal_frame` over a TCP transport.
 //!
-//! Real-world deployment will not resemble this scaffold — the point
-//! is to prove the transport + session state-machine + consent gate
-//! work end-to-end before wiring in the heavy OS plumbing.
+//! The daemon remains a single-viewer, single-session stub with a
+//! fixture AEAD key. Multi-viewer fan-out and the ML-KEM handshake
+//! land in later milestones.
 //!
 //! Roadmap:
 //!
 //! | Milestone | What lands here |
-//! |-----------|-----------------|
-//! | **M0** (now) | TCP listener + per-envelope logging. |
-//! | M1 | Wayland capture (`wlr-screencopy` on wlroots compositors, `xdg-desktop-portal` on GNOME/KDE); H.264 encode via `ffmpeg-next`. |
+//! |---|---|
+//! | **M1** (now) | TestCapture + passthrough codec + TCP send loop. |
+//! | M1.2b | `xenia-video::h264` backend (ffmpeg-next libx264). |
+//! | M1.2c | Wayland capture backends (wlr-screencopy + xdg-portal). |
 //! | M2 | Consent ceremony flow (UI prompt on the host). |
-//! | M3 | Iroh QUIC primary transport; WebSocket fallback. |
-//! | M4 | Productization: systemd unit, sandboxing, log rotation. |
-//!
-//! See `docs/ADR-001-m0-architecture.md` for the three strategic
-//! decisions that shaped this layout (monorepo, Wayland-exclusive,
-//! AGPL-for-binaries).
+//! | M3 | Iroh QUIC transport; WebSocket fallback. |
+//! | M4 | Systemd unit, sandboxing, log rotation. |
 
 use clap::Parser;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
+use xenia_capture::{ScreenCapture, TestCapture};
+use xenia_peer_core::frame::PixelFormat as FramePixelFormat;
 use xenia_peer_core::transport::{TcpTransport, Transport};
-use xenia_peer_core::{Session, SessionRole};
+use xenia_peer_core::{frame::RawFrame, Session, SessionRole};
+use xenia_video::passthrough::PassthroughEncoder;
+use xenia_video::{EncodeParams, Encoder, PixelFormat as CodecPixelFormat};
 
 /// Dev fixture key. M2 replaces with handshake-derived session key.
 const FIXTURE_KEY: [u8; 32] = *b"xenia-peer-m0-stub-fixture-key!!";
@@ -56,10 +57,22 @@ struct Args {
     #[arg(long, default_value_t = 0x01)]
     epoch: u8,
 
-    /// Exit after receiving this many input envelopes. 0 = run
-    /// indefinitely. Useful for M0 smoke tests.
-    #[arg(long, default_value_t = 0)]
-    max_inputs: u64,
+    /// Capture width in pixels.
+    #[arg(long, default_value_t = 320)]
+    width: u32,
+
+    /// Capture height in pixels.
+    #[arg(long, default_value_t = 200)]
+    height: u32,
+
+    /// Target capture frame rate (frames per second).
+    #[arg(long, default_value_t = 10)]
+    fps: u32,
+
+    /// Number of frames to send before exiting. 0 = run
+    /// indefinitely (until viewer disconnects).
+    #[arg(long, default_value_t = 30)]
+    frames: u64,
 }
 
 fn parse_source_id(hex: &str) -> Result<[u8; 8], String> {
@@ -72,6 +85,14 @@ fn parse_source_id(hex: &str) -> Result<[u8; 8], String> {
             .map_err(|e| format!("source_id hex[{i}]: {e}"))?;
     }
     Ok(out)
+}
+
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[tokio::main]
@@ -89,8 +110,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(&args.listen).await?;
     let local = listener.local_addr()?;
-    info!(addr = %local, "xenia-peer daemon listening");
-    warn!("M0 scaffold: fixture key in use; no screen capture; no consent UI. See ADR-001.");
+    info!(addr = %local, width = args.width, height = args.height, fps = args.fps, "xenia-peer daemon listening");
+    warn!(
+        "M1 scaffold: fixture key, TestCapture synthetic frames, passthrough codec. See ADR-001."
+    );
 
     let (stream, peer) = listener.accept().await?;
     stream.set_nodelay(true).ok();
@@ -100,35 +123,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = Session::with_fixture(SessionRole::Host, source_id, args.epoch);
     session.install_key(FIXTURE_KEY);
 
-    let mut received: u64 = 0;
+    let mut capture = TestCapture::new(args.width, args.height);
+    let mut encoder = PassthroughEncoder::new(EncodeParams {
+        width: args.width,
+        height: args.height,
+        pixel_format: CodecPixelFormat::Rgba,
+        target_fps: args.fps,
+        bitrate_kbps: 0, // passthrough ignores this
+    });
+
+    let frame_interval = if args.fps > 0 {
+        Duration::from_micros(1_000_000 / args.fps as u64)
+    } else {
+        Duration::from_millis(0)
+    };
+    let mut ticker = tokio::time::interval(frame_interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut sent: u64 = 0;
     loop {
-        if args.max_inputs != 0 && received >= args.max_inputs {
-            info!(received, "reached --max-inputs, exiting");
+        if args.frames != 0 && sent >= args.frames {
+            info!(sent, "reached --frames, exiting");
             break;
         }
-        let envelope = match transport.recv_envelope().await {
-            Ok(e) => e,
+        ticker.tick().await;
+
+        let Ok(Some(captured)) = capture.capture() else {
+            warn!("capture produced no frame; exiting");
+            break;
+        };
+        let pts = now_ms();
+        let packets = match encoder.encode(&captured.pixels, pts) {
+            Ok(p) => p,
             Err(err) => {
-                info!(error = %err, "viewer disconnected or transport closed");
-                break;
+                warn!(error = %err, "encode failed");
+                continue;
             }
         };
-        match session.open_input(&envelope) {
-            Ok(input) => {
-                received += 1;
-                info!(
-                    seq = input.sequence,
-                    bytes = input.payload.len(),
-                    total_received = received,
-                    "input received"
-                );
+        for packet in packets {
+            let raw_frame = RawFrame::encoded(
+                sent,
+                pts,
+                captured.width,
+                captured.height,
+                FramePixelFormat::Passthrough,
+                packet.bytes,
+            );
+            let envelope = match session.seal_frame(&raw_frame) {
+                Ok(e) => e,
+                Err(err) => {
+                    warn!(error = %err, "seal_frame failed");
+                    continue;
+                }
+            };
+            if let Err(err) = transport.send_envelope(&envelope).await {
+                info!(error = %err, sent, "transport closed, exiting");
+                return Ok(());
             }
-            Err(err) => {
-                warn!(error = %err, "failed to open input envelope");
+            sent += 1;
+            if sent % 10 == 0 || sent == 1 {
+                info!(sent, bytes = raw_frame.pixels.len(), "frame sent");
             }
         }
     }
 
-    info!(received, "daemon exiting");
+    info!(sent, "daemon exiting");
     Ok(())
 }

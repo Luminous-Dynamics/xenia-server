@@ -51,7 +51,7 @@
 
 #![warn(missing_docs)]
 
-mod frame;
+pub mod frame;
 mod session;
 pub mod transport;
 

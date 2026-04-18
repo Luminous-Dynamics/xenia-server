@@ -1,0 +1,28 @@
+[package]
+name = "xenia-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "AGPL-3.0-or-later"
+description = "Screen-capture abstraction for the Xenia remote-session stack. Wayland-native (wlr-screencopy on wlroots, xdg-desktop-portal ScreenCast on GNOME/KDE). Contains portions extracted from Symthaea's rdp_capture.rs."
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[features]
+default = []
+# wlr-screencopy capture on wlroots-based compositors (Sway, Hyprland,
+# labwc). Requires wayland-client + wayland-protocols dev headers;
+# enable this feature inside a `nix develop` shell or an environment
+# with the appropriate dev packages.
+wayland-wlroots = []
+# xdg-desktop-portal ScreenCast capture on GNOME/KDE. Requires
+# zbus + ashpd.
+wayland-portal = []
+
+[dev-dependencies]

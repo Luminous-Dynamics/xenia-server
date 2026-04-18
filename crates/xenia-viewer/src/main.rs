@@ -2,36 +2,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! `xenia-viewer` — native client that connects to an `xenia-peer`
-//! daemon and watches the shared session.
+//! daemon and receives + decodes sealed frames.
 //!
-//! **Pre-alpha M0 scaffold.** This binary currently:
+//! **M1 scaffold.** Full recv → open → decode pipeline is now wired
+//! end-to-end using [`xenia_video::passthrough`]. Output is pixel
+//! statistics to stdout; the egui GUI lands at M4.
 //!
-//! - Connects over TCP to an `xenia-peer` daemon.
-//! - Installs the same fixture session key as the daemon (dev only).
-//! - Sends a handful of synthetic `RawInput` envelopes as a liveness
-//!   probe.
-//! - Does **not** render frames. Does **not** decode video. No GUI.
-//!
-//! Roadmap:
-//!
-//! | Milestone | What lands here |
-//! |-----------|-----------------|
-//! | **M0** (now) | CLI that proves the transport + wire. |
-//! | M1 | Receive encoded frames from the daemon, decode via `ffmpeg-next`, dump to stdout or a file. |
-//! | M2 | Consent ceremony: show the prompt to the user. |
-//! | M3 | Iroh QUIC client; WebSocket fallback. |
-//! | M4 | `egui` GUI (primary) → `Tauri` for productization. |
-//!
-//! See `docs/ADR-001-m0-architecture.md` for the three strategic
-//! decisions shaping this layout.
+//! If `--verify` is passed, the viewer locally instantiates a
+//! mirror [`xenia_capture::TestCapture`] with the same dimensions
+//! and asserts that every decoded frame equals the expected
+//! deterministic output byte-for-byte. This is the M1 exit-criterion
+//! smoke check without needing a separate integration harness.
 
 use clap::Parser;
 use tracing::{info, warn};
+use xenia_capture::{ScreenCapture, TestCapture};
+use xenia_peer_core::frame::PixelFormat as FramePixelFormat;
 use xenia_peer_core::transport::{TcpTransport, Transport};
 use xenia_peer_core::{Session, SessionRole};
+use xenia_video::passthrough::PassthroughDecoder;
+use xenia_video::{Decoder, EncodedPacket};
 
-/// Dev fixture key. MUST match the daemon's value. M2 replaces with
-/// handshake-derived key.
+/// Dev fixture key. MUST match the daemon's value.
 const FIXTURE_KEY: [u8; 32] = *b"xenia-peer-m0-stub-fixture-key!!";
 
 #[derive(Parser, Debug)]
@@ -45,19 +37,32 @@ struct Args {
     #[arg(long, default_value = "127.0.0.1:4747")]
     connect: String,
 
-    /// Fixed source_id (hex, 16 chars). MUST match the daemon's
-    /// `--source-id-hex`.
+    /// Fixed source_id (hex, 16 chars). MUST match daemon.
     #[arg(long, default_value = "7878656e69617068")]
     source_id_hex: String,
 
-    /// Fixed epoch. MUST match the daemon's `--epoch`.
+    /// Fixed epoch. MUST match daemon.
     #[arg(long, default_value_t = 0x01)]
     epoch: u8,
 
-    /// Number of synthetic input probes to send. M1 replaces with
-    /// real mouse/keyboard capture.
-    #[arg(long, default_value_t = 5)]
-    probe_count: u64,
+    /// Stop after this many frames (0 = unbounded; run until daemon disconnects).
+    #[arg(long, default_value_t = 30)]
+    frames: u64,
+
+    /// Capture width used by the daemon (for `--verify`).
+    #[arg(long, default_value_t = 320)]
+    width: u32,
+
+    /// Capture height used by the daemon (for `--verify`).
+    #[arg(long, default_value_t = 200)]
+    height: u32,
+
+    /// If set, instantiate a local mirror `TestCapture` and
+    /// byte-compare every decoded frame to what the daemon should
+    /// have produced. Fails fast on mismatch. M1 exit-criterion
+    /// check.
+    #[arg(long)]
+    verify: bool,
 }
 
 fn parse_source_id(hex: &str) -> Result<[u8; 8], String> {
@@ -85,21 +90,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_id = parse_source_id(&args.source_id_hex)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    info!(peer = %args.connect, "connecting to xenia-peer daemon");
-    warn!("M0 scaffold: fixture key in use; no frame decode; no GUI. See ADR-001.");
+    info!(peer = %args.connect, frames = args.frames, verify = args.verify, "connecting to xenia-peer daemon");
+    warn!("M1 scaffold: fixture key, passthrough decode, no GUI. See ADR-001.");
 
     let mut transport = TcpTransport::connect(&args.connect).await?;
     let mut session = Session::with_fixture(SessionRole::Viewer, source_id, args.epoch);
     session.install_key(FIXTURE_KEY);
 
-    for i in 0..args.probe_count {
-        let payload = format!(r#"{{"probe":{i},"m0":"hello"}}"#).into_bytes();
-        let payload_len = payload.len();
-        let envelope = session.seal_input_event(payload)?;
-        transport.send_envelope(&envelope).await?;
-        info!(seq = i, bytes = payload_len, "input probe sent");
+    let mut decoder = PassthroughDecoder::new();
+    let mut expected_mirror = if args.verify {
+        Some(TestCapture::new(args.width, args.height))
+    } else {
+        None
+    };
+
+    let mut received: u64 = 0;
+    loop {
+        if args.frames != 0 && received >= args.frames {
+            info!(received, "reached --frames, exiting");
+            break;
+        }
+        let envelope = match transport.recv_envelope().await {
+            Ok(e) => e,
+            Err(err) => {
+                info!(error = %err, received, "daemon disconnected");
+                break;
+            }
+        };
+        let raw_frame = match session.open_frame(&envelope) {
+            Ok(f) => f,
+            Err(err) => {
+                warn!(error = %err, "failed to open frame");
+                continue;
+            }
+        };
+        if raw_frame.pixel_format != FramePixelFormat::Passthrough {
+            warn!(fmt = ?raw_frame.pixel_format, "expected Passthrough frame, got something else");
+            continue;
+        }
+        let packet = EncodedPacket {
+            bytes: raw_frame.pixels,
+            pts_ms: raw_frame.timestamp_ms,
+            is_keyframe: true,
+        };
+        let frames = match decoder.decode(&packet) {
+            Ok(f) => f,
+            Err(err) => {
+                warn!(error = %err, "decode failed");
+                continue;
+            }
+        };
+        for decoded in frames {
+            received += 1;
+
+            if let Some(ref mut mirror) = expected_mirror {
+                let expected = mirror
+                    .capture()
+                    .expect("mirror capture")
+                    .expect("mirror produced frame");
+                if decoded.pixels != expected.pixels {
+                    // Fail fast — the pipeline is broken and further
+                    // frames wouldn't tell us anything new.
+                    return Err(format!(
+                        "verify: decoded frame {received} did not match local mirror (byte-for-byte diff)"
+                    )
+                    .into());
+                }
+                if received <= 3 || received % 10 == 0 {
+                    info!(received, "frame verified byte-for-byte vs mirror");
+                }
+            } else if received <= 3 || received % 10 == 0 {
+                info!(
+                    received,
+                    width = decoded.width,
+                    height = decoded.height,
+                    bytes = decoded.pixels.len(),
+                    "frame received + decoded"
+                );
+            }
+        }
     }
 
-    info!(sent = args.probe_count, "viewer exiting");
+    if args.verify {
+        info!(verified = received, "verify: all frames matched mirror");
+    }
+    info!(received, "viewer exiting");
     Ok(())
 }
