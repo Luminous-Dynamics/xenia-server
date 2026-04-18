@@ -56,6 +56,7 @@ impl AnyTransport {
 enum CodecChoice {
     Passthrough,
     H264,
+    Hdc,
 }
 
 fn make_decoder(
@@ -64,6 +65,7 @@ fn make_decoder(
     match choice {
         CodecChoice::Passthrough => Ok(Box::new(PassthroughDecoder::new())),
         CodecChoice::H264 => build_h264_decoder(),
+        CodecChoice::Hdc => build_hdc_decoder(),
     }
 }
 
@@ -78,10 +80,21 @@ fn build_h264_decoder() -> Result<Box<dyn Decoder + Send>, Box<dyn std::error::E
     Err("xenia-viewer was built without the `h264` feature; rebuild with `cargo build -p xenia-viewer --features h264`, or connect to a daemon using --codec passthrough".into())
 }
 
+#[cfg(feature = "hdc")]
+fn build_hdc_decoder() -> Result<Box<dyn Decoder + Send>, Box<dyn std::error::Error>> {
+    Ok(Box::new(xenia_video::hdc::HdcDecoder::new()))
+}
+
+#[cfg(not(feature = "hdc"))]
+fn build_hdc_decoder() -> Result<Box<dyn Decoder + Send>, Box<dyn std::error::Error>> {
+    Err("xenia-viewer was built without the `hdc` feature; rebuild with `cargo build -p xenia-viewer --features hdc`".into())
+}
+
 fn codec_to_frame_format(choice: CodecChoice) -> FramePixelFormat {
     match choice {
         CodecChoice::Passthrough => FramePixelFormat::Passthrough,
         CodecChoice::H264 => FramePixelFormat::H264,
+        CodecChoice::Hdc => FramePixelFormat::Hdc,
     }
 }
 

@@ -78,6 +78,10 @@ enum CodecChoice {
     /// at build time AND libav dev headers. In `nix develop` shells both
     /// are provided; outside Nix install ffmpeg + llvm dev packages.
     H264,
+    /// HDC hybrid tile-delta codec (ported from Symthaea). Pure Rust,
+    /// no external libs. Excels on static / text / UI content; grayscale
+    /// output. Requires the `hdc` Cargo feature.
+    Hdc,
 }
 
 fn make_encoder(
@@ -87,6 +91,7 @@ fn make_encoder(
     match choice {
         CodecChoice::Passthrough => Ok(Box::new(PassthroughEncoder::new(params))),
         CodecChoice::H264 => build_h264_encoder(params),
+        CodecChoice::Hdc => build_hdc_encoder(params),
     }
 }
 
@@ -105,10 +110,23 @@ fn build_h264_encoder(
     Err("xenia-peer was built without the `h264` feature; rebuild inside `nix develop` with `cargo build -p xenia-peer --features h264`, or use --codec passthrough".into())
 }
 
+#[cfg(feature = "hdc")]
+fn build_hdc_encoder(params: EncodeParams) -> Result<Box<dyn Encoder>, Box<dyn std::error::Error>> {
+    Ok(Box::new(xenia_video::hdc::HdcEncoder::new(params)))
+}
+
+#[cfg(not(feature = "hdc"))]
+fn build_hdc_encoder(
+    _params: EncodeParams,
+) -> Result<Box<dyn Encoder>, Box<dyn std::error::Error>> {
+    Err("xenia-peer was built without the `hdc` feature; rebuild with `cargo build -p xenia-peer --features hdc`".into())
+}
+
 fn codec_to_frame_format(choice: CodecChoice) -> FramePixelFormat {
     match choice {
         CodecChoice::Passthrough => FramePixelFormat::Passthrough,
         CodecChoice::H264 => FramePixelFormat::H264,
+        CodecChoice::Hdc => FramePixelFormat::Hdc,
     }
 }
 

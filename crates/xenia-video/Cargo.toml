@@ -17,11 +17,18 @@ tracing.workspace = true
 # build time — enable inside a `nix develop` shell or a container
 # with ffmpeg dev packages. Default build path is passthrough-only.
 ffmpeg-next = { version = "7", default-features = false, features = ["codec", "format", "software-scaling"], optional = true }
+# HDC codec dependencies. Pure Rust, no external libs.
+blake3 = { version = "1", default-features = false, optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+bincode = { version = "1.3", optional = true }
 
 [features]
 # Passthrough codec is always available and has no external deps.
 default = []
 # H.264 software encode/decode via libx264. Pulls in ffmpeg-next.
 h264 = ["dep:ffmpeg-next"]
+# HDC hybrid tile-delta codec. Pure Rust, no system deps. Ported
+# from Symthaea's rdp_codec.rs (same author, same AGPL terms).
+hdc = ["dep:blake3", "dep:serde", "dep:bincode"]
 
 [dev-dependencies]

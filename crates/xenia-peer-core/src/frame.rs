@@ -29,6 +29,10 @@ pub enum PixelFormat {
     /// identity-encoded RGBA with a 12-byte magic/header). See
     /// `xenia_video::passthrough`.
     Passthrough = 32,
+    /// xenia-video HDC hybrid tile-delta codec payload (bincode-
+    /// serialized `HdcPacket`). See `xenia_video::hdc`. Ported
+    /// from Symthaea's `rdp_codec.rs`.
+    Hdc = 33,
 }
 
 /// A single captured-screen frame on the forward path.
@@ -101,7 +105,7 @@ impl RawFrame {
         debug_assert!(
             matches!(
                 format,
-                PixelFormat::H264 | PixelFormat::Vp9 | PixelFormat::Passthrough
+                PixelFormat::H264 | PixelFormat::Vp9 | PixelFormat::Passthrough | PixelFormat::Hdc
             ),
             "RawFrame::encoded requires an encoded PixelFormat variant",
         );
@@ -123,7 +127,7 @@ impl RawFrame {
             PixelFormat::Rgba8 | PixelFormat::Bgra8 => {
                 self.pixels.len() as u64 == u64::from(self.width) * u64::from(self.height) * 4
             }
-            PixelFormat::H264 | PixelFormat::Vp9 | PixelFormat::Passthrough => {
+            PixelFormat::H264 | PixelFormat::Vp9 | PixelFormat::Passthrough | PixelFormat::Hdc => {
                 // Encoded formats are opaque — any non-empty byte
                 // sequence is structurally valid here; decoder has
                 // the actual say.

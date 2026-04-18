@@ -30,3 +30,5 @@ egui = "0.29"
 # Pass-through: rebuild xenia-video with the h264 feature so the
 # viewer can decode `--codec h264` streams.
 h264 = ["xenia-video/h264"]
+# HDC hybrid codec (pure Rust, grayscale output).
+hdc = ["xenia-video/hdc"]

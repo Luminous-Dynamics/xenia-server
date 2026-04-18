@@ -29,3 +29,6 @@ thiserror.workspace = true
 # daemon can select `--codec h264` at runtime. Requires libav dev
 # headers (enable inside nix develop).
 h264 = ["xenia-video/h264"]
+# HDC hybrid tile-delta codec (ported from Symthaea). Pure Rust,
+# no external libs. Grayscale output.
+hdc = ["xenia-video/hdc"]

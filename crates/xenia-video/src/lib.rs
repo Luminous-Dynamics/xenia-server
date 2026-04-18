@@ -51,6 +51,9 @@ pub mod passthrough;
 #[cfg(feature = "h264")]
 pub mod h264;
 
+#[cfg(feature = "hdc")]
+pub mod hdc;
+
 /// Errors surfaced by any codec backend.
 #[derive(Debug, Error)]
 pub enum CodecError {
